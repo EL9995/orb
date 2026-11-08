@@ -1,7 +1,7 @@
 # Spec: music ears for vtube-cat (max accuracy)
 
 Hand-off spec for a fresh session. Repos: `~/Documents/GitHub/Eric Portfolio/vtube-cat` (the orb, public)
-and `~/Documents/GitHub/Eric Portfolio/model-factory` (the pitch classifier and FL dataset, local only).
+and `~/Documents/GitHub/Eric Portfolio/fl-studio` (the pitch classifier and FL dataset; moved out of model-factory 2026-11-07).
 Machine: MacBook M5, 16 GB, macOS, everything local. Written 2026-11-05.
 
 ## Goal
@@ -12,7 +12,7 @@ to Whisper, so lyrics get transcribed as if Eric said them, and anything else is
 
 ## Why not the existing classifier
 
-`model-factory/music/pitch_classifier.py` (a numpy MLP from scratch) was trained on 6 FL presets of
+`fl-studio/music/pitch_classifier.py` (a numpy MLP from scratch) was trained on 6 FL presets of
 clean exports (4,537 clips: notes, scales, chords). It proved the point (100% held-out vs ~8% for the
 audio LLMs), but it has never heard a real instrument, a full mix or the laptop mic. Keep it as a
 baseline in the shootout and stop investing in it.
