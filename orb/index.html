@@ -1,0 +1,565 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Orb</title>
+<style>
+  :root {
+    --bg: #f4f4f6; --fg: #1d1d22; --muted: #6e6e78; --btn: #1d1d22; --btn-fg: #fff;
+    --ghost: rgba(0,0,0,.06); --ghost-hover: rgba(0,0,0,.1); --danger: #d64545;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0d0d10; --fg: #ececf1; --muted: #8b8b96; --btn: #ececf1; --btn-fg: #111;
+      --ghost: rgba(255,255,255,.08); --ghost-hover: rgba(255,255,255,.14); --danger: #ff6b6b;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: var(--bg); color: var(--fg);
+    font: 15px/1.4 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+    display: flex; overflow: hidden; -webkit-user-select: none; user-select: none;
+  }
+  .main {
+    flex: 1; min-width: 0; height: 100%;
+    display: flex; flex-direction: column; align-items: center;
+  }
+  .stage { position: relative; flex: 1; width: 100%; min-height: 140px; }
+  canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .mute-icon {
+    position: absolute; left: 50%; top: 50%; width: 44px; height: 44px; margin: -22px 0 0 -22px;
+    color: var(--fg); opacity: 0; transition: opacity .3s; pointer-events: none;
+  }
+  .mute-icon.on { opacity: .9; }
+  .caption {
+    max-width: 620px; padding: 0 20px 10px; min-height: 3.1em; text-align: center;
+    font-size: 19px; line-height: 1.4; transition: opacity .35s;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+    -webkit-user-select: text; user-select: text;
+  }
+  .caption.hide { opacity: 0; }
+  .caption.you { color: var(--muted); }
+  .caption.you::before { content: "You: "; }
+  .info { text-align: center; padding: 0 16px; min-height: 64px; }
+  .name { font-size: 17px; font-weight: 600; letter-spacing: .01em; }
+  .state { font-size: 13px; color: var(--muted); margin-top: 2px; }
+  .note {
+    font-size: 12px; color: var(--muted); margin-top: 4px; max-width: 420px; opacity: .85;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .controls { display: flex; gap: 12px; align-items: center; padding: 14px 16px 26px; }
+  button {
+    font: inherit; border: 0; cursor: pointer; border-radius: 999px;
+    transition: transform .12s, background .2s, opacity .2s;
+  }
+  button:active { transform: scale(.96); }
+  button:focus-visible { outline: 2px solid var(--muted); outline-offset: 3px; }
+  #power {
+    min-width: 132px; height: 48px; padding: 0 28px; font-size: 16px; font-weight: 600;
+    background: var(--btn); color: var(--btn-fg);
+  }
+  #power.stop { background: var(--danger); color: #fff; }
+  #power:disabled { opacity: .4; cursor: default; }
+  #mute {
+    width: 48px; height: 48px; display: grid; place-items: center;
+    background: var(--ghost); color: var(--fg);
+  }
+  #mute:hover, #chatBtn:hover { background: var(--ghost-hover); }
+  #chatBtn {
+    width: 48px; height: 48px; display: grid; place-items: center;
+    background: var(--ghost); color: var(--fg);
+  }
+  #chatBtn svg { width: 22px; height: 22px; }
+  #chatBtn[aria-pressed="true"] { background: var(--btn); color: var(--btn-fg); }
+
+  .chat {
+    width: 340px; height: 100%; display: none; flex-direction: column;
+    border-left: 1px solid var(--ghost-hover); background: var(--bg);
+  }
+  body.chat-open .chat { display: flex; }
+  .chat header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 14px 16px; font-weight: 600; border-bottom: 1px solid var(--ghost);
+  }
+  .chat header button {
+    font-size: 13px; padding: 4px 10px; background: var(--ghost); color: var(--muted);
+  }
+  .chat header button:hover { background: var(--ghost-hover); }
+  .chat header .close { display: none; }
+  .log {
+    flex: 1; overflow-y: auto; padding: 12px 14px 20px; display: flex; flex-direction: column;
+    gap: 10px; -webkit-user-select: text; user-select: text;
+  }
+  .msg { max-width: 88%; }
+  .msg .who { font-size: 11px; color: var(--muted); margin: 0 4px 2px; }
+  .msg .bubble { padding: 8px 12px; border-radius: 16px; background: var(--ghost); }
+  .msg.you { align-self: flex-end; text-align: right; }
+  .msg.you .bubble { background: var(--btn); color: var(--btn-fg); text-align: left; }
+  .msg.sys { align-self: center; font-size: 12px; color: var(--muted); }
+  .msg.event { align-self: center; font-size: 11.5px; color: var(--muted); opacity: .8; }
+  .msg.event::before { content: "\23F1\FE0E  "; }
+  .fader {
+    display: flex; align-items: center; gap: 10px; font-size: 12.5px; color: var(--muted);
+    padding: 0 16px 20px; margin-top: -10px;
+  }
+  .fader input { width: 160px; accent-color: var(--fg); }
+  .fader output { min-width: 112px; }
+  .nudge { font-size: 12px; color: var(--muted); margin-top: 3px; min-height: 1.3em; opacity: .85; }
+  .ctx { font-size: 11.5px; color: var(--muted); opacity: .7; font-variant-numeric: tabular-nums; }
+  .fader select {
+    font: inherit; color: var(--fg); background: var(--ghost); border: 0; border-radius: 8px;
+    padding: 3px 6px;
+  }
+  .sleepcard {
+    display: none; margin: 8px auto 0; padding: 10px 12px; border-radius: 14px; max-width: 360px;
+    background: var(--ghost); font-size: 13px;
+  }
+  .sleepcard.on { display: block; }
+  .sleepcard div { display: flex; gap: 8px; justify-content: center; margin-top: 8px; }
+  .sleepcard button { padding: 6px 14px; font-size: 13px; background: var(--ghost-hover); color: var(--fg); }
+  .sleepcard button.primary { background: var(--btn); color: var(--btn-fg); }
+  .empty { margin: auto; color: var(--muted); font-size: 13px; text-align: center; }
+  .typebar { display: flex; gap: 8px; padding: 10px 12px 14px; border-top: 1px solid var(--ghost); }
+  .typebar input {
+    flex: 1; min-width: 0; font: inherit; color: var(--fg); background: var(--ghost);
+    border: 0; border-radius: 999px; padding: 9px 14px; outline: none;
+    -webkit-user-select: text; user-select: text;
+  }
+  .typebar input:focus { background: var(--ghost-hover); }
+  .typebar button { padding: 0 14px; font-weight: 600; background: var(--btn); color: var(--btn-fg); }
+  .typebar :disabled { opacity: .45; cursor: default; }
+  @media (max-width: 720px) {          /* small window: the log covers the orb instead */
+    .chat { position: fixed; inset: 0; width: auto; border: 0; z-index: 2; }
+    .chat header .close { display: inline-block; }
+  }
+  #mute[aria-pressed="true"] { background: var(--danger); color: #fff; }
+  #mute svg { width: 22px; height: 22px; }
+  #mute .slash { display: none; }
+  #mute[aria-pressed="true"] .slash { display: inline; }
+  @media (max-height: 360px) {
+    .controls { padding: 8px 12px 12px; }
+    .info { min-height: 0; }
+    .note { display: none; }
+    #power { height: 40px; min-width: 100px; padding: 0 18px; }
+    #mute, #chatBtn { width: 40px; height: 40px; }
+    .caption { font-size: 16px; min-height: 0; padding-bottom: 4px; }
+    .fader { padding-bottom: 8px; margin-top: -4px; }
+    .nudge { display: none; }
+  }
+</style>
+</head>
+<body>
+ <div class="main">
+  <div class="stage">
+    <canvas id="orb" aria-hidden="true"></canvas>
+    <svg class="mute-icon" id="muteIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+         stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/>
+      <path d="M3 3l18 18"/>
+    </svg>
+  </div>
+  <div class="caption hide" id="caption" aria-live="polite"></div>
+  <div class="info">
+    <div class="name" id="name">&nbsp;</div>
+    <div class="state" id="state">Connecting...</div>
+    <div class="nudge" id="nudge"></div>
+    <div class="note" id="note"></div>
+    <div class="ctx" id="ctx"></div>
+    <div class="sleepcard" id="sleepCard">
+      <span id="sleepText">It went to sleep.</span> End the session, or keep the mic on so you can wake it by talking?
+      <div><button id="endSession">End session</button><button class="primary" id="keepOn">Keep mic on</button></div>
+    </div>
+  </div>
+  <div class="controls">
+    <button id="power" disabled>Start</button>
+    <button id="mute" aria-pressed="false" aria-label="Mute microphone" title="Mute (M)">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round" stroke-linejoin="round">
+        <rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/>
+        <path class="slash" d="M3 3l18 18"/>
+      </svg>
+    </button>
+    <button id="chatBtn" aria-pressed="false" aria-label="Chat log" title="Chat log (C)">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1.1-4.6A8 8 0 1 1 21 12z"/>
+      </svg>
+    </button>
+  </div>
+  <label class="fader" title="How soon and how often it speaks up on its own">
+    Speaks up
+    <input type="range" id="chatty" min="0" max="100" step="5" value="60">
+    <output id="chattyVal"></output>
+    <span title="Minutes with no word from you before it signs off and unloads the model">sleeps after
+      <select id="sleepAfter">
+        <option value="10">10 min</option><option value="20" selected>20 min</option>
+        <option value="30">30 min</option><option value="60">1 hour</option><option value="0">never</option>
+      </select></span>
+    <span title="Ollama model for the brain. Switching while it's on restarts it (it forgets this chat)">model
+      <select id="modelSel"></select></span>
+  </label>
+ </div>
+ <aside class="chat" aria-label="Chat log">
+  <header>
+    <span>Chat</span>
+    <span><button id="clearChat">Clear</button> <button class="close" id="closeChat">Close</button></span>
+  </header>
+  <div class="log" id="log"><div class="empty">Nothing said yet.</div></div>
+  <form class="typebar" id="typeForm" autocomplete="off">
+    <input id="typeBox" maxlength="500" placeholder="Press Start to chat" disabled>
+    <button id="typeSend" disabled>Send</button>
+  </form>
+ </aside>
+
+<script>
+// ------------------------------------------------------------------ server link
+const S = { state: "offline", mouth: 0, level: 0, emotion: "neutral", energy: 0.5,
+            muted: false, running: false, launched: false, name: "", note: "" };
+let ws = null, pageV = 0;
+
+function connect() {
+  ws = new WebSocket(`ws://${location.host}/ws`);
+  ws.onopen = () => {                   // the fader survives orb restarts
+    const saved = localStorage.getItem("orbChatty");
+    if (saved !== null) send("chattiness", saved);
+    const sleepSaved = localStorage.getItem("orbSleep");
+    if (sleepSaved !== null) send("sleep-after", sleepSaved);
+  };
+  ws.onmessage = e => {
+    const m = JSON.parse(e.data);
+    if (m.type === "chat") renderChat(m.chat);
+    else {
+      if (m.page_v && pageV && m.page_v !== pageV) location.reload();   // the page file changed
+      pageV = pageV || m.page_v;
+      Object.assign(S, m); render();
+    }
+  };
+  ws.onclose = () => { S.state = "offline"; S.running = false; render(); setTimeout(connect, 1000); };
+}
+function send(cmd, arg = "") {
+  if (ws && ws.readyState === 1) ws.send(JSON.stringify({ cmd, arg }));
+}
+
+// ------------------------------------------------------------------ controls + text
+const $ = id => document.getElementById(id);
+const LABELS = { off: "Off", starting: "Starting...", listening: "Listening", thinking: "Thinking",
+                 speaking: "Speaking", muted: "Muted", sleeping: "Sleeping · talk or type to wake",
+                 offline: "Orb server not running" };
+
+$("power").onclick = () => send(S.running ? "stop" : "start");
+$("mute").onclick = () => send("mute", S.muted ? "off" : "on");
+function toggleChat(open = !document.body.classList.contains("chat-open")) {
+  document.body.classList.toggle("chat-open", open);
+  $("chatBtn").setAttribute("aria-pressed", open);
+  localStorage.setItem("orbChat", open ? "1" : "");
+  resize();
+  if (open) $("log").scrollTop = $("log").scrollHeight;
+}
+$("chatBtn").onclick = () => toggleChat();
+$("closeChat").onclick = () => toggleChat(false);
+$("clearChat").onclick = () => send("clear");
+$("typeForm").onsubmit = e => {
+  e.preventDefault();
+  const box = $("typeBox"), text = box.value.trim();
+  if (!text || !S.running) return;
+  send("type", text);                  // shows up in the log once the brain picks it up
+  box.value = "";
+};
+addEventListener("keydown", e => {
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  if (e.target.id === "typeBox") {     // typing a message: no shortcuts
+    if (e.key === "Escape") e.target.blur();
+    return;
+  }
+  const k = e.key.toLowerCase();
+  if (k === "m") $("mute").click();
+  if (k === "c") toggleChat();
+  if (k === "escape") toggleChat(false);
+});
+
+// ------------------------------------------------------------------ speaking up on its own
+const STAGE_LABELS = { check_in: "Check-in", give_space: "Backing off", jab: "Jab", self_talk: "Self-talk" };
+function chattyText(c) {
+  if (c <= 0) return "never";
+  const secs = 60 * Math.pow(4, 1 - 2 * c);           // initiative.py: WAIT x 4^(1 - 2c)
+  const when = secs < 90 ? `~${Math.round(secs / 5) * 5}s` : `~${Math.round(secs / 60)} min`;
+  return `after ${when} quiet${c >= 1 ? ", no PASS" : ""}`;
+}
+const chatty = $("chatty");
+let draggingFader = false;
+chatty.oninput = () => {
+  draggingFader = true;
+  const c = chatty.value / 100;
+  $("chattyVal").textContent = chattyText(c);
+  localStorage.setItem("orbChatty", c);
+  send("chattiness", c);
+};
+chatty.onchange = () => { draggingFader = false; };
+$("modelSel").onchange = e => {
+  localStorage.setItem("orbModel", e.target.value);
+  send("model", e.target.value);
+};
+let modelsShown = "", modelRestored = false;
+$("sleepAfter").onchange = e => {
+  localStorage.setItem("orbSleep", e.target.value);
+  send("sleep-after", e.target.value);
+};
+$("endSession").onclick = () => send("stop");
+$("keepOn").onclick = () => send("sleep", "ack");
+function renderNudge() {
+  const el = $("nudge");
+  const live = S.running && S.nudge_at > 0 && !S.quiet && !S.muted &&
+               (S.state === "listening" || S.state === "muted");
+  if (!live) { el.textContent = S.running && S.chattiness <= 0 ? "Won't speak up on its own" : ""; return; }
+  const left = Math.max(0, Math.round(S.nudge_at - Date.now() / 1000));
+  const what = STAGE_LABELS[S.nudge_stage] || "Speaks up";
+  el.textContent = left > 0 ? `${what} in ${left < 90 ? left + "s" : Math.round(left / 60) + " min"}`
+                            : `${what} any moment`;
+}
+setInterval(renderNudge, 500);
+
+let lastCaption = "";
+function renderCaption() {
+  const el = $("caption"), c = S.caption;
+  if (c && c.text) {
+    if (c.text !== lastCaption) { el.textContent = c.text; lastCaption = c.text; }
+    el.classList.toggle("you", c.who === "you");
+    el.classList.remove("hide");
+  } else {
+    el.classList.add("hide");          // fades out; the old text stays until the next line
+  }
+}
+
+function renderChat(chat) {
+  const log = $("log");
+  const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 40;
+  log.replaceChildren();
+  if (!chat.length) {
+    log.innerHTML = '<div class="empty">Nothing said yet.</div>';
+    return;
+  }
+  for (const m of chat) {
+    const row = document.createElement("div");
+    row.className = `msg ${m.who}`;
+    if (m.who === "sys" || m.who === "event") {
+      row.textContent = `${m.text} · ${m.t}`;
+    } else {
+      const who = document.createElement("div");
+      who.className = "who";
+      who.textContent = `${m.who === "you" ? "You" : (S.name || "Character")} · ${m.t}`;
+      const b = document.createElement("div");
+      b.className = "bubble";
+      b.textContent = m.text;
+      row.append(who, b);
+    }
+    log.append(row);
+  }
+  if (atBottom) log.scrollTop = log.scrollHeight;
+}
+
+function render() {
+  const p = $("power");
+  p.disabled = S.state === "offline";
+  p.textContent = S.running ? "Stop" : "Start";
+  p.classList.toggle("stop", S.running);
+  $("mute").setAttribute("aria-pressed", S.muted);
+  $("muteIcon").classList.toggle("on", S.muted && S.running);
+  $("name").textContent = S.name || " ";
+  $("state").textContent = (LABELS[S.state] || S.state) +
+    (S.quiet && S.running ? " · quiet mode" : "");
+  $("note").textContent = S.state === "offline" ? "Start it with Orb.command or python3 orb_body.py" : S.note;
+  document.title = S.name ? `${S.name} · ${LABELS[S.state] || S.state}` : "Orb";
+  renderCaption();
+  renderNudge();
+  $("sleepCard").classList.toggle("on", S.running && S.sleeping && !S.sleep_ack);
+  $("sleepText").textContent = `${S.name || "It"} went to sleep.`;
+  const c = S.ctx;
+  $("ctx").textContent = c && S.running
+    ? `context ${c.estimated ? "~" : ""}${c.used.toLocaleString()} / ${c.max.toLocaleString()} tokens · ${Math.round(100 * c.used / c.max)}%`
+    : "";
+  if (!modelRestored && S.models) {       // last pick survives orb restarts (only while it's off)
+    modelRestored = true;
+    let saved = null;
+    try { saved = localStorage.getItem("orbModel"); } catch (e) {}
+    if (saved && !S.running && saved !== S.model && S.models.includes(saved)) send("model", saved);
+  }
+  const ms = (S.models && S.models.length ? S.models : [S.model]).filter(Boolean);
+  if (ms.join() !== modelsShown) {
+    modelsShown = ms.join();
+    $("modelSel").innerHTML = "";
+    for (const m of ms) $("modelSel").add(new Option(m, m));
+  }
+  if (S.model && document.activeElement !== $("modelSel")) $("modelSel").value = S.model;
+  if (typeof S.sleep_after === "number" && document.activeElement !== $("sleepAfter"))
+    $("sleepAfter").value = String(S.sleep_after);
+  const canType = S.running && S.state !== "offline";
+  $("typeBox").disabled = $("typeSend").disabled = !canType;
+  $("typeBox").placeholder = canType ? `Message ${S.name || ""}`.trim() : "Press Start to chat";
+  if (!draggingFader && typeof S.chattiness === "number") {
+    chatty.value = Math.round(S.chattiness * 100);
+    $("chattyVal").textContent = chattyText(S.chattiness);
+  }
+}
+
+// ------------------------------------------------------------------ orb drawing
+const cv = $("orb"), ctx = cv.getContext("2d");
+const dark = matchMedia("(prefers-color-scheme: dark)");
+const calm = matchMedia("(prefers-reduced-motion: reduce)");
+
+// two colours per mood: [inner, outer]
+const PALETTES = {
+  neutral:   [[120, 150, 255], [176, 110, 255]],
+  happy:     [[255, 196, 92],  [255, 108, 128]],
+  annoyed:   [[255, 72, 48],   [196, 18, 28]],
+  sad:       [[84, 150, 255],  [40, 80, 200]],
+  surprised: [[255, 226, 110], [90, 210, 255]],
+  smug:      [[214, 120, 255], [255, 110, 190]],
+  tired:     [[150, 160, 196], [96, 108, 150]],
+};
+const MOOD_WORDS = [
+  [/happy|joy|excit|glad|cheer|love|laugh|smug/, "happy"],
+  [/annoy|angry|mad|irrit|frustr|furious|disgust/, "annoyed"],
+  [/sad|cry|upset|lonely|hurt/, "sad"],
+  [/surpris|shock|wow|confus/, "surprised"],
+  [/tired|sleep|bored|calm/, "tired"],
+];
+function moodColors(emotion) {
+  if (PALETTES[emotion]) return PALETTES[emotion];
+  for (const [re, key] of MOOD_WORDS) if (re.test(emotion)) return PALETTES[key];
+  return PALETTES.neutral;
+}
+function greyColors() {
+  return dark.matches ? [[92, 92, 102], [58, 58, 66]] : [[196, 196, 204], [160, 160, 170]];
+}
+
+// per-state look; every value eases toward its target so state changes glide
+const LOOKS = {
+  offline:   { scale: .80, wobble: 0,    spin: 0,   shimmer: 0,  alpha: .5,  glow: 0,   grey: 1 },
+  off:       { scale: .82, wobble: 0,    spin: 0,   shimmer: 0,  alpha: 1,   glow: 0,   grey: 1 },
+  starting:  { scale: .88, wobble: .02,  spin: .5,  shimmer: .5, alpha: .8,  glow: .3,  grey: .6 },
+  listening: { scale: 1,   wobble: .018, spin: .15, shimmer: 0,  alpha: 1,   glow: .55, grey: 0 },
+  thinking:  { scale: .94, wobble: .03,  spin: 1.4, shimmer: 1,  alpha: 1,   glow: .45, grey: 0 },
+  speaking:  { scale: 1,   wobble: .02,  spin: .3,  shimmer: 0,  alpha: 1,   glow: .8,  grey: 0 },
+  muted:     { scale: .9,  wobble: .008, spin: .05, shimmer: 0,  alpha: .42, glow: .1,  grey: .3 },
+  sleeping:  { scale: .76, wobble: .004, spin: .02, shimmer: 0,  alpha: .3,  glow: .05, grey: .55 },
+};
+const cur = { ...LOOKS.offline, mouth: 0, level: 0, energy: .5, rot: 0,
+              c1: greyColors()[0].slice(), c2: greyColors()[1].slice() };
+
+function ease(a, b, rate, dt) { return a + (b - a) * (1 - Math.exp(-rate * dt)); }
+function mix(a, b, t) { return a.map((v, i) => v + (b[i] - v) * t); }
+function rgba(c, a) { return `rgba(${c[0] | 0},${c[1] | 0},${c[2] | 0},${a})`; }
+
+function resize() {
+  const dpr = devicePixelRatio || 1;
+  cv.width = cv.clientWidth * dpr; cv.height = cv.clientHeight * dpr;
+}
+new ResizeObserver(resize).observe(cv);   // window resizes and the chat panel opening
+
+let last = performance.now();
+function frame(now) {
+  const dt = Math.min(.1, (now - last) / 1000), t = now / 1000;
+  last = now;
+  const state = S.state in LOOKS ? S.state : "off";
+  const look = LOOKS[state];
+  for (const k of ["scale", "wobble", "spin", "shimmer", "alpha", "glow", "grey"])
+    cur[k] = ease(cur[k], look[k], 5, dt);
+  // the brain sends mouth at ~30 fps: open fast, close a little slower, so it pulses without jitter
+  const mouth = state === "speaking" ? S.mouth : 0;
+  cur.mouth = ease(cur.mouth, mouth, mouth > cur.mouth ? 24 : 10, dt);
+  const level = state === "listening" ? S.level : 0;
+  cur.level = ease(cur.level, level, level > cur.level ? 18 : 6, dt);
+  cur.energy = ease(cur.energy, S.energy, 2, dt);
+
+  const [m1, m2] = moodColors(S.emotion), [g1, g2] = greyColors();
+  cur.c1 = cur.c1.map((v, i) => ease(v, m1[i] + (g1[i] - m1[i]) * cur.grey, 3, dt));
+  cur.c2 = cur.c2.map((v, i) => ease(v, m2[i] + (g2[i] - m2[i]) * cur.grey, 3, dt));
+
+  const motion = calm.matches ? .3 : 1;
+  const lively = .55 + cur.energy * .9;                 // energy: slow and calm .. quick and bouncy
+  cur.rot += dt * cur.spin * lively;
+
+  const W = cv.width, H = cv.height, cx = W / 2, cy = H / 2;
+  const R0 = Math.min(W, H) * .30;
+  const breath = state === "listening" || state === "muted"
+    ? Math.sin(t * 1.4 * lively) * .028 * motion
+    : state === "sleeping" ? Math.sin(t * .6) * .035 * motion : 0;   // slow sleepy breathing
+  const R = R0 * (cur.scale + breath + cur.level * .22 + cur.mouth * .26);
+  const wob = (cur.wobble * lively + cur.level * .05 + cur.mouth * .07) * motion;
+
+  ctx.clearRect(0, 0, W, H);
+  ctx.globalAlpha = cur.alpha;
+
+  // outer glow
+  if (cur.glow > .01) {
+    const g = ctx.createRadialGradient(cx, cy, R * .6, cx, cy, R * 1.9);
+    g.addColorStop(0, rgba(cur.c1, .32 * cur.glow * (dark.matches ? 1 : .8)));
+    g.addColorStop(1, rgba(cur.c1, 0));
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, W, H);
+  }
+
+  // two blob layers, each a circle bent by a few slow sine waves
+  const blob = (r, phase, amp) => {
+    ctx.beginPath();
+    const N = 120;
+    for (let i = 0; i <= N; i++) {
+      const a = (i / N) * Math.PI * 2;
+      const d = Math.sin(3 * a + t * 1.3 * lively + phase) * .5
+              + Math.sin(5 * a - t * 1.7 * lively + phase * 2) * .3
+              + Math.sin(2 * a + t * .7 * lively - phase) * .2;
+      const rr = r * (1 + amp * d);
+      const x = cx + Math.cos(a + cur.rot) * rr, y = cy + Math.sin(a + cur.rot) * rr;
+      i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+    }
+    ctx.closePath();
+  };
+  const ox = Math.cos(cur.rot) * R * .35, oy = Math.sin(cur.rot) * R * .35;
+
+  blob(R * 1.04, 2.1, wob * 1.4);
+  let g = ctx.createRadialGradient(cx - ox, cy - oy, R * .1, cx, cy, R * 1.1);
+  g.addColorStop(0, rgba(cur.c2, .55)); g.addColorStop(1, rgba(cur.c2, .15));
+  ctx.fillStyle = g; ctx.fill();
+
+  blob(R, 0, wob);
+  g = ctx.createRadialGradient(cx + ox * .6, cy + oy * .6 - R * .2, R * .05, cx, cy, R);
+  g.addColorStop(0, rgba(mix(cur.c1, [255, 255, 255], .18), 1));
+  g.addColorStop(.55, rgba(cur.c1, 1));
+  g.addColorStop(1, rgba(cur.c2, 1));
+  ctx.fillStyle = g; ctx.fill();
+
+  // thinking: two soft lights circling inside the orb
+  if (cur.shimmer > .01) {
+    ctx.save(); ctx.clip();
+    for (const [off, size, a] of [[0, .55, .42], [Math.PI, .4, .26]]) {
+      const ang = cur.rot * 2.4 + off;
+      const lx = cx + Math.cos(ang) * R * .48, ly = cy + Math.sin(ang) * R * .48;
+      const s = ctx.createRadialGradient(lx, ly, 0, lx, ly, R * size);
+      s.addColorStop(0, `rgba(255,255,255,${a * cur.shimmer})`);
+      s.addColorStop(1, "rgba(255,255,255,0)");
+      ctx.fillStyle = s; ctx.fillRect(0, 0, W, H);
+    }
+    ctx.restore();
+  }
+
+  // soft highlight, top left
+  g = ctx.createRadialGradient(cx - R * .35, cy - R * .4, 0, cx - R * .35, cy - R * .4, R * .7);
+  g.addColorStop(0, `rgba(255,255,255,${.2 * (1 - cur.grey * .6)})`);
+  g.addColorStop(1, "rgba(255,255,255,0)");
+  blob(R, 0, wob); ctx.fillStyle = g; ctx.fill();
+
+  ctx.globalAlpha = 1;
+  requestAnimationFrame(frame);
+}
+
+if (localStorage.getItem("orbChat")) toggleChat(true);
+resize();
+render();
+connect();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

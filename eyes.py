@@ -6,7 +6,7 @@ changed, and asks a small vision model (through Ollama) for a one-line descripti
 brain.py reads the latest description whenever it talks, and can comment on its own
 when something new happens.
 
-Setup (once):  ollama pull qwen2.5vl:3b        (or "moondream" for faster, dumber eyes)
+Setup (once):  ollama pull qwen2.5vl:3b-q8_0        (or "moondream" for faster, dumber eyes)
 macOS will ask to let Terminal record the screen: System Settings > Privacy & Security >
 Screen & System Audio Recording > turn on Terminal, then quit and reopen Terminal.
 """
@@ -19,7 +19,7 @@ import time
 import urllib.request
 
 # ---------------------------------------------------------------- settings
-VISION_MODEL = "qwen2.5vl:3b"   # "moondream" = ~2x faster but much less smart
+VISION_MODEL = "qwen2.5vl:3b-q8_0"   # "moondream" = ~2x faster but much less smart
 OLLAMA_URL = "http://localhost:11434/api/chat"
 MONITOR = 1                     # 1 = main display
 LOOK_EVERY = 1.0                # seconds between screen checks
@@ -77,7 +77,7 @@ class Eyes:
             "model": VISION_MODEL, "stream": False, "keep_alive": "30m",
             "messages": [{"role": "user", "content": self.prompt,
                           "images": [base64.b64encode(buf.getvalue()).decode()]}],
-            "options": {"num_predict": 60, "temperature": 0.2},
+            "options": {"num_predict": 60, "temperature": 0.2, "num_ctx": 4096},
         }).encode()
         req = urllib.request.Request(OLLAMA_URL, data, {"Content-Type": "application/json"})
         with urllib.request.urlopen(req, timeout=60) as r:

@@ -1,7 +1,7 @@
 """
-brain_voice.py - TALK to Nova with your mic, she answers out loud.
+brain_voice.py - TALK to the character with your mic; it answers out loud.
 
-Run (with vts_body.py already running in another window):
+The orb page's Start button runs this. By hand (with orb_body.py already running):
     python3 brain_voice.py           (add --watch to roast your gaming, --video to watch videos with you)
 
 Speech recognition (and the Kokoro voice) need Python 3.12, so this relaunches itself
@@ -17,5 +17,5 @@ import brain     # noqa: E402
 import launcher  # noqa: E402
 
 launcher.ensure(brain.required_packages(voice_mode=True))
-sys.argv = [sys.argv[0], "--voice"] + [a for a in sys.argv[1:] if a in ("--watch", "--video")]   # mic mode
+sys.argv = [sys.argv[0], "--voice"] + [a for a in sys.argv[1:] if a in ("--watch", "--video", "--no-initiative")]   # mic mode
 brain.main()

@@ -50,9 +50,13 @@ class Ears:
                                      blocksize=self.frame, callback=self._on_audio)
         self.stream.start()
         self.threshold = 0.01
+        self.level = 0.0             # RMS of the latest 30 ms slice (the orb swells with it)
+        self.hearing = False         # True from when you start talking until it has your words
 
     def _on_audio(self, data, frames, t, status):
-        self.q.put(data[:, 0].copy())
+        frame = data[:, 0].copy()
+        self.level = rms(frame)
+        self.q.put(frame)
 
     def _frames(self):
         while True:
@@ -92,6 +96,7 @@ class Ears:
                 loud_run = loud_run + 1 if loud else 0
                 if loud_run >= START_FRAMES:
                     speech = list(preroll)
+                    self.hearing = True
                 continue
             speech.append(f)                         # recording
             silent = 0 if loud else silent + 1
@@ -107,11 +112,12 @@ class Ears:
     def hear(self):
         """Wait for one complete thing you say and return it as text (skips noise)."""
         while True:
+            self.hearing = False
             audio = self.record()
             if len(audio) < RATE * MIN_UTTERANCE_SEC:
                 continue
             t0 = time.time()
             text = self.transcribe(audio)
-            if text.lower() in JUNK or looks_hallucinated(text):
+            if text.lower() in JUNK or looks_hallucinated(text) or not any(c.isalpha() for c in text):
                 continue
             return text, time.time() - t0

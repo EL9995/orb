@@ -13,14 +13,31 @@ Full list: https://huggingface.co/hexgrad/Kokoro-82M/blob/main/VOICES.md
 Optional RVC voice conversion: after Kokoro speaks a sentence, an RVC model re-skins it
 into a character's voice (see brain.py RVC_* settings). Runs Applio's engine in a
 background worker (rvc_worker.py) with its own Python 3.12 environment, set up on first use.
+
+Optional Seed-VC voice conversion, per persona: if the persona file (ORB_PERSONA) has a
+<name>.voice.json beside it with a "seedvc" block, a fine-tuned Seed-VC model re-skins every
+sentence instead (seedvc_worker.py, run in the Seed-VC repo's own Python). The same file can
+set "kokoro_voice" for the voice Kokoro speaks in before conversion. Example:
+    {"kokoro_voice": "af_nicole",
+     "seedvc": {"python": "~/.venvs/seedvc/bin/python", "repo": "~/seed-vc",
+                "checkpoint": "~/seed-vc/runs/me.pth", "config": "~/seed-vc/runs/me.yml",
+                "reference": "~/voice/me_ref.wav", "steps": 10, "pitch": 0, "enabled": true}}
+
+Or the persona speaks in its own cloned voice with a "tts" block: a voice-clone TTS model (Qwen3-TTS)
+served by audio.cpp (audiocpp_server, started here if not already running on the port):
+    {"tts": {"family": "qwen3_tts", "server": "~/audiocpp/audiocpp_server",
+             "model": "~/audiocpp/models/Qwen3-TTS-12Hz-1.7B-Base-GGUF/qwen3-tts-12hz-1.7b-base-q8_0_v2.gguf",
+             "reference": "~/voice/me.wav", "reference_text_file": "~/voice/me.txt", "seed": 7}}
 """
 
+import atexit
 import json
 import os
 import shutil
 import subprocess
 import tempfile
 import threading
+import time
 import urllib.request
 import wave
 import zipfile
@@ -130,10 +147,136 @@ class RVC:
         self.last_secs = res.get("secs", 0.0)
 
 
+# ---------------------------------------------------------------- Seed-VC voice conversion
+def persona_voice():
+    """The persona's <name>.voice.json settings ({} if none), found beside ORB_PERSONA."""
+    persona = os.environ.get("ORB_PERSONA")
+    f = Path(persona).with_suffix(".voice.json") if persona else None
+    if f and not f.is_absolute():
+        f = HERE / f
+    return json.loads(f.read_text()) if f and f.exists() else {}
+
+
+class SeedVC:
+    """Talks to seedvc_worker.py, which keeps a fine-tuned Seed-VC model loaded between sentences.
+    Same convert(src, dst) interface as RVC."""
+
+    def __init__(self, cfg):
+        p = {k: str(Path(os.path.expanduser(str(v)))) for k, v in cfg.items()
+             if k in ("python", "repo", "checkpoint", "config", "reference")}
+        for k in ("python", "checkpoint", "config", "reference"):
+            if not Path(p[k]).exists():
+                raise FileNotFoundError(f"Seed-VC {k} not found: {p[k]}")
+        self.job = {"steps": int(cfg.get("steps", 10)), "pitch": float(cfg.get("pitch", 0)),
+                    "cfg": float(cfg.get("cfg", 0.7))}
+        env = {k: v for k, v in os.environ.items() if k != "VIRTUAL_ENV"}
+        env["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
+        cmd = [p["python"], str(HERE / "seedvc_worker.py"), p["repo"], p["checkpoint"], p["config"], p["reference"]]
+        print(f"starting Seed-VC voice '{Path(p['checkpoint']).stem}' (loads ~4 GB, ~30 s)...", flush=True)
+        self.proc = subprocess.Popen(cmd, cwd=HERE, env=env, text=True, bufsize=1,
+                                     stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        self.log = open(HERE / "seedvc_worker.log", "w")
+        threading.Thread(target=self._pipe_stderr, daemon=True).start()
+        hello = json.loads(self.proc.stdout.readline() or '{"ready": false, "error": "worker exited"}')
+        if not hello.get("ready"):
+            raise RuntimeError(f"Seed-VC worker failed: {hello.get('error')} (see seedvc_worker.log)")
+        print(f"Seed-VC ready on {hello.get('device')}.", flush=True)
+        self.lock = threading.Lock()
+        self.last_secs = 0.0
+
+    def _pipe_stderr(self):
+        for line in self.proc.stderr:
+            self.log.write(line)
+            self.log.flush()
+
+    def convert(self, src, dst):
+        with self.lock:
+            self.proc.stdin.write(json.dumps({**self.job, "in": str(src), "out": str(dst)}) + "\n")
+            self.proc.stdin.flush()
+            res = json.loads(self.proc.stdout.readline() or '{"ok": false, "error": "worker died"}')
+        if not res.get("ok"):
+            raise RuntimeError(res.get("error"))
+        self.last_secs = res.get("secs", 0.0)
+
+
+# ---------------------------------------------------------------- audio.cpp voice-clone TTS
+class AudiocppTTS:
+    """A voice-clone TTS (e.g. Qwen3-TTS) served by audio.cpp's audiocpp_server, which keeps the model
+    loaded. Speaks in the character's own voice from a reference clip, so no conversion step.
+    Starts the server if nothing answers on the port, and stops it when Nova exits."""
+
+    def __init__(self, cfg):
+        x = lambda k: str(Path(os.path.expanduser(str(cfg[k]))))
+        self.url = f"http://127.0.0.1:{int(cfg.get('port', 8790))}"
+        self.ref = x("reference")
+        text = cfg.get("reference_text") or Path(x("reference_text_file")).read_text()
+        self.job = {"model": "tts", "voice_ref": self.ref, "reference_text": text.strip(),
+                    **({"seed": int(cfg["seed"])} if "seed" in cfg else {})}
+        self.proc = None
+        if not self._up():
+            conf = Path(tempfile.gettempdir()) / "nova_audiocpp_tts.json"
+            conf.write_text(json.dumps({"host": "127.0.0.1", "port": int(cfg.get("port", 8790)),
+                                        "threads": int(cfg.get("threads", 8)), "models": [
+                {"id": "tts", "family": cfg.get("family", "qwen3_tts"), "task": "tts",
+                 "mode": "offline", "path": x("model")}]}))
+            print(f"starting {cfg.get('family', 'qwen3_tts')} voice server (loads ~2.5 GB)...", flush=True)
+            self.log = open(HERE / "audiocpp_tts.log", "w")
+            self.proc = subprocess.Popen([x("server"), "--config", str(conf), "--backend",
+                                          cfg.get("backend", "metal"), "--no-ui"],
+                                         stdout=self.log, stderr=subprocess.STDOUT)
+            atexit.register(self.stop)
+            for _ in range(120):
+                if self._up() or self.proc.poll() is not None:
+                    break
+                time.sleep(0.5)
+            if not self._up():
+                self.stop()
+                raise RuntimeError("voice server didn't start (see audiocpp_tts.log)")
+        else:
+            self.job["model"] = self._model_id()
+        print("voice server ready.", flush=True)
+
+    def _up(self):
+        try:
+            with urllib.request.urlopen(self.url + "/v1/models", timeout=2) as r:
+                return any(m.get("loaded") for m in json.load(r).get("data", []))
+        except Exception:
+            return False
+
+    def _model_id(self):                             # a server we didn't start: use its first TTS model
+        with urllib.request.urlopen(self.url + "/v1/models", timeout=2) as r:
+            return next(m["id"] for m in json.load(r)["data"] if m.get("task") == "tts")
+
+    def speak(self, text, path):
+        req = urllib.request.Request(self.url + "/v1/audio/speech", json.dumps({**self.job, "input": text}).encode(),
+                                     {"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=120) as r:   # a 16-bit mono WAV
+            Path(path).write_bytes(r.read())
+
+    def stop(self):
+        if self.proc and self.proc.poll() is None:
+            self.proc.terminate()
+
+
 class Voice:
     def __init__(self, engine="kokoro", kokoro_voice="af_heart", speed=1.0, mac_voice=None,
                  rvc_model=None, rvc_pitch=0, rvc_index_rate=0.4):
-        self.rvc = None
+        self.rvc = None                              # the converter: RVC or Seed-VC, same interface
+        pv = persona_voice()
+        kokoro_voice = pv.get("kokoro_voice", kokoro_voice)
+        self.tts = None
+        if pv.get("tts") and pv["tts"].get("enabled", True):
+            try:
+                self.tts = AudiocppTTS(pv["tts"])    # the persona speaks in its own cloned voice
+                engine, rvc_model = "audiocpp", None
+            except Exception as e:                   # fall back to Kokoro rather than go silent
+                print(f"(cloned voice off: {e} - using Kokoro)", flush=True)
+        if pv.get("seedvc") and pv["seedvc"].get("enabled", True):
+            try:
+                self.rvc = SeedVC(pv["seedvc"])
+                rvc_model = None                     # the persona's own voice wins over brain.py's RVC
+            except Exception as e:                   # don't let a bad voice model kill the character
+                print(f"(Seed-VC off: {e})", flush=True)
         if rvc_model:
             try:
                 self.rvc = RVC(rvc_model, rvc_pitch, rvc_index_rate)
@@ -163,11 +306,14 @@ class Voice:
         try:
             self.rvc.convert(raw, path)
         except Exception as e:                       # never go silent: fall back to plain voice
-            print(f"\n(RVC failed: {e} - using plain voice)", flush=True)
+            print(f"\n(voice conversion failed: {e} - using plain voice)", flush=True)
             shutil.copyfile(raw, path)
         return True
 
     def _speak(self, text, path):
+        if self.engine == "audiocpp":
+            self.tts.speak(text, path)
+            return True
         if self.engine == "kokoro":
             import numpy as np
             lang = "en-gb" if self.kokoro_voice.startswith("b") else "en-us"

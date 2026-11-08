@@ -17,8 +17,12 @@ from pathlib import Path
 def ensure(packages):
     """packages: {import_name: pip_name}. Returns only if all can be imported."""
     missing = [pip for mod, pip in packages.items() if importlib.util.find_spec(mod) is None]
-    if not missing:
-        return
+    if missing:
+        relaunch(missing, list(packages.values()))
+
+
+def relaunch(missing, pips):
+    """Re-run the calling script through uv on Python 3.12 with `pips` installed."""
     uv = shutil.which("uv") or str(Path.home() / ".local" / "bin" / "uv")
     if os.environ.get("NOVA_VIA_UV") or not Path(uv).exists():
         print(f"Missing: {', '.join(missing)}.\n"
@@ -28,7 +32,7 @@ def ensure(packages):
         sys.exit(1)
     os.environ["NOVA_VIA_UV"] = "1"                    # prevents an endless relaunch loop
     cmd = [uv, "run", "--python", "3.12"]
-    for pip in packages.values():
+    for pip in pips:
         cmd += ["--with", pip]
     cmd += [str(Path(sys.argv[0]).resolve())] + sys.argv[1:]
     print("switching to Python 3.12 (first time takes a minute)...", flush=True)
